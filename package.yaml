@@ -36,6 +36,7 @@ executables:
     dependencies:
     - channels
     - cml
+    - BoundedChan
 
 tests:
   channels-test:

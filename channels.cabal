@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 053a037cb80466a155bd2a0c9a1df8531180b99070a40d5cb2818c98b5a9935c
+-- hash: a90102c626280365d93e7ed64120e168c96818c756bfdf519f4726ed907cbca3
 
 name:           channels
 version:        0.1.0.0
@@ -39,12 +39,16 @@ library
 executable channels-exe
   main-is: Main.hs
   other-modules:
+      CML.Core
+      CML.Utils
+      Fib
       Paths_channels
   hs-source-dirs:
       app
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      base >=4.7 && <5
+      BoundedChan
+    , base >=4.7 && <5
     , channels
     , cml
   default-language: Haskell2010
