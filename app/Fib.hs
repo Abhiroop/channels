@@ -1,10 +1,8 @@
 module Fib where
 
-import Control.Concurrent (forkIO)
 import Control.Concurrent.CML
 import Control.Monad (void)
 import CML.Utils
-import Data.IORef
 
 forever :: IO a -> IO b
 forever action = do

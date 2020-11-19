@@ -1,5 +1,6 @@
 module CML.Utils ( receiveSync
                  , sendSync
+                 , selectSync
                  ) where
 
 import Control.Concurrent.CML
@@ -12,3 +13,6 @@ receiveSync ch = sync $ receive ch dontcare
 
 sendSync :: Channel a -> a -> IO ()
 sendSync ch v = sync $ transmit ch v
+
+selectSync :: [Event a] -> IO a
+selectSync = sync . choose
