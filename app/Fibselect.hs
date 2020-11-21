@@ -3,6 +3,7 @@ module Fibselect where
 import Control.Concurrent.CML
 import Control.Monad (void)
 import CML.Utils
+import Data.Maybe
 
 dontcare :: a -> Bool
 dontcare _ = True
@@ -14,6 +15,8 @@ forever action = do
 
 
 spawnNoTID = void . spawn
+
+
 
 add :: Channel Int -> Channel Int -> Channel Int -> IO ()
 add inCh1 inCh2 outCh = forever $ do
@@ -29,6 +32,9 @@ add inCh1 inCh2 outCh = forever $ do
       m1 <- receiveSync channel
       return (m1, m2)
 
+
+-- In delay the size of the state or "buffer" (in Lustre speak) is
+-- bounded by the size of the Maybe Int. So either Nothing or Just Int
 delay :: Maybe Int
       -> Channel Int
       -> Channel Int
@@ -72,3 +78,51 @@ test = do
       x <- receiveSync outCh
       putStrLn $ "Fibonacci Term  " ++ (show i) ++ " - "++ show x
       foo outCh (i + 1)
+
+
+
+------------------------------------------------------------------------------------
+
+
+
+
+----------------------------Incorrect delay implementations-------------------------
+-- push based delay
+-- doesn't work; throws exception
+-- Incorrect; we shouldn't select based on actions here
+-- we should select based on the value of init
+delay' :: Maybe Int
+       -> Channel Int
+       -> Channel Int
+       -> IO ()
+delay' init inCh outCh = forever $ do
+  let val = fromMaybe (error "error value doesn't exist") init
+  selectSync [ wrap (receive inCh dontcare) (\v -> delay' (Just v) inCh outCh)
+             , wrap (transmit outCh val) (\_ -> delay' Nothing inCh outCh)
+             ]
+
+
+
+
+
+-- gives strange results
+delay'' :: Int
+        -> Channel Int
+        -> Channel Int
+        -> IO ()
+delay'' init inCh outCh = forever $ do
+  selectSync [ wrap (receive inCh dontcare) (\v -> delay'' v inCh outCh)
+             , wrap (transmit outCh init) (\_ -> delay'' init inCh outCh)
+             ]
+
+m = do
+  c1 <- channel
+  c2 <- channel
+  spawn $ delay(Just 0) c1 c2 -- Why moving spawnNoTID to delay gives non deterministic results
+  foo c1 c2 1
+  where
+    foo c1 c2 i = do
+      spawn $ sendSync c1 i
+      r <- receiveSync c2
+      putStrLn $ "Step - " ++ show i ++ "; Value - " ++ show r
+      foo c1 c2 (i + 1)

@@ -18,7 +18,6 @@ add inCh1 inCh2 outCh = forever $ do
   v2 <- receiveSync inCh2
   sendSync outCh (v1 + v2)
 
-
 delay :: Maybe Int
        -> Channel Int
        -> Channel Int
@@ -61,9 +60,6 @@ test = do
       x <- receiveSync outCh
       putStrLn $ "Fibonacci Term  " ++ (show i) ++ " - "++ show x
       foo outCh (i + 1)
-
-
-
 
 -- Unit Tests
 
