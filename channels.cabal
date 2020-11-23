@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: a90102c626280365d93e7ed64120e168c96818c756bfdf519f4726ed907cbca3
+-- hash: 2bee27e0452088bb0684595bdfff2ad42a81de28371bda1b2fa55ceb0cd179c7
 
 name:           channels
 version:        0.1.0.0
@@ -42,15 +42,20 @@ executable channels-exe
       CML.Core
       CML.Utils
       Fib
+      Fibselect
+      Kitchen
       Paths_channels
   hs-source-dirs:
       app
+  default-extensions: GeneralizedNewtypeDeriving
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       BoundedChan
     , base >=4.7 && <5
     , channels
     , cml
+    , mtl
+    , transformers
   default-language: Haskell2010
 
 test-suite channels-test

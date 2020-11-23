@@ -37,6 +37,10 @@ executables:
     - channels
     - cml
     - BoundedChan
+    - mtl
+    - transformers
+    default-extensions:
+    - GeneralizedNewtypeDeriving
 
 tests:
   channels-test:
