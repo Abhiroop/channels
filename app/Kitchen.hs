@@ -51,7 +51,7 @@ Timed activities
    The kitchen should never catch fire.
 2. Orders have wait times after which they expire and you don't get points.
 
-There sensors located on
+There are sensors located on
 1. Rice cookers
 2. Dirty plates counter
 3. Order queue (although mostly you would have to poll it all the time)
@@ -66,9 +66,9 @@ Currently we have one robot which maps to a single processor.
   it deploy to two separate robots?
 
 ** Simplifications **
-1. all sensor never drop messages
+1. all sensors never drop messages
 2. all connections are never broken.
-3. no retry, timeouts
+3. no retry, connection timeouts etc
 4. real world APIs are written in C; and always callback based; a wrapper
    is needed which translates the program's model to whatever protocol the
    C function on the sensor expects like BLE etc. This is a challenge of
