@@ -36,6 +36,7 @@ executables:
     dependencies:
     - channels
     - cml
+    - containers
     - BoundedChan
     - mtl
     - transformers

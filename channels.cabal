@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 2bee27e0452088bb0684595bdfff2ad42a81de28371bda1b2fa55ceb0cd179c7
+-- hash: b9388a06d45d6ff0b0eee71d675ba832077d832bc1dda0913aaa725915e17712
 
 name:           channels
 version:        0.1.0.0
@@ -44,6 +44,7 @@ executable channels-exe
       Fib
       Fibselect
       Kitchen
+      Utils.Queue
       Paths_channels
   hs-source-dirs:
       app
@@ -54,6 +55,7 @@ executable channels-exe
     , base >=4.7 && <5
     , channels
     , cml
+    , containers
     , mtl
     , transformers
   default-language: Haskell2010

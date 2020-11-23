@@ -1,15 +1,13 @@
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE DeriveFunctor #-}
 module Kitchen where
 
 
-
 import CML.Utils
+import Control.Concurrent.BoundedChan
+import Control.Concurrent.Chan
 import Control.Concurrent.CML
-import Control.Monad.Trans.State.Strict
-import Prelude hiding (init)
+import Control.Monad.Trans.State.Strict -- transformers
 
-import qualified Control.Monad.State.Strict as S
+import qualified Control.Monad.State.Strict as S -- mtl
 
 {- Robot Kitchen
 
@@ -53,10 +51,14 @@ Timed activities
 
 There are sensors located on
 1. Rice cookers
-2. Dirty plates counter
-3. Order queue (although mostly you would have to poll it all the time)
+2. Dirty plates counter (queue)
+3. Order queue
 
-Currently we have one robot which maps to a single processor.
+Constraints:
+- Currently we have one robot which maps to a single processor.
+
+- The edges of the system should have buffers but bounded buffers which
+  block after it reaches capacity
 
 
 ** Not covered **
@@ -104,7 +106,7 @@ data CookerState = VACANT | COOKING | COOKDONE | FIRE deriving (Show, Ord, Eq)
 
 -- Unlimited Resources
 newtype Fish =
-  Fish {fishState :: FishState}
+  Fish { fishState :: FishState }
   deriving (Show, Ord, Eq)
 
 data FishState = CUT | WHOLE deriving (Show, Ord, Eq)
@@ -134,14 +136,15 @@ data KitchenState = KitchenState { freshplates :: [Plate] -- 5 plates
                                  , soap :: [SoapWater]
                                  }
 
-init :: KitchenState
-init = KitchenState { freshplates = replicate 5 (Plate CLEAN)
-                    , boards  = replicate 2 (ChoppingBoard EMPTY)
-                    , cookers = replicate 2 (RiceCooker VACANT)
-                    , fishes  = repeat (Fish WHOLE)
-                    , rice    = repeat (Rice UNCOOKED)
-                    , soap    = repeat SoapWater
-                    }
+initKitchen :: KitchenState
+initKitchen =
+  KitchenState { freshplates = replicate 5 (Plate CLEAN)
+               , boards  = replicate 2 (ChoppingBoard EMPTY)
+               , cookers = replicate 2 (RiceCooker VACANT)
+               , fishes  = repeat (Fish WHOLE)
+               , rice    = repeat (Rice UNCOOKED)
+               , soap    = repeat SoapWater
+               }
 
 newtype Kitchen a =
   Kitchen
@@ -151,14 +154,35 @@ newtype Kitchen a =
 
 
 -- Input and output to system
+-- Dirty plates are also inputted to the system
 
-newtype Order =
-  Order {waitTime :: Int}
-  deriving (Ord, Show, Eq)
+data Order =
+  Order { waitTime :: Int
+        , orderId  :: Int
+        } deriving (Ord, Show, Eq)
 
-data Serve = Serve deriving (Ord, Show, Eq)
+data Serve =
+  Serve { servedRice :: Rice
+        , servedFish :: Fish
+        , serviceId  :: Int -- should match order id
+        } deriving (Ord, Show, Eq)
 
-cook :: Kitchen ()
-cook = do
-  f <- S.get
-  S.liftIO $ putStrLn "Hello!"
+verifyServe :: Serve -> Bool
+verifyServe s =
+  case  (riceStatus,fishStatus) of
+    (COOKED, CUT) -> True
+    _             -> False
+  where
+    (riceStatus,fishStatus) = (riceState $ servedRice s, fishState $ servedFish s)
+
+
+--                    Bounded, buffered channels
+--                              | | |
+--                              | | |
+--                              | | |
+cook :: BoundedChan Order  -- <-  | |
+     -> BoundedChan Plate  -- <---  |
+     -> BoundedChan Serve  -- <-----
+     -> Kitchen ()
+cook orderQ plateQ serviceQ = do
+  cook orderQ plateQ serviceQ
