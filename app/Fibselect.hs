@@ -5,18 +5,6 @@ import Control.Monad (void)
 import CML.Utils
 import Data.Maybe
 
-dontcare :: a -> Bool
-dontcare _ = True
-
-forever :: IO a -> IO b
-forever action = do
-  action
-  forever action
-
-
-spawnNoTID = void . spawn
-
-
 
 add :: Channel Int -> Channel Int -> Channel Int -> IO ()
 add inCh1 inCh2 outCh = forever $ do

@@ -1,7 +1,9 @@
+{-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 module Kitchen where
 
 
 import CML.Utils
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.BoundedChan
 import Control.Concurrent.Chan
 import Control.Concurrent.CML
@@ -25,12 +27,13 @@ A robot is capable of
 2. Putting rice on a cooker
 3. Taking the rice out when it is cooked
 4. Fetching plates
-5. Putting cooked rice on a plate.
-6. Taking fish
-7. Cutting it
-8. Put a cut fish on the plate (no need to cook it)
-9. Serve a plate with cut fish and cooked rice to the customer
-10. Clean dirty plates
+5. Clean dirty plates
+6. Putting cooked rice on a plate.
+7. Taking fish
+8. Cutting it
+9. Put a cut fish on the plate (no need to cook it)
+10. Serve a plate with cut fish and cooked rice to the customer
+
 
 The resources with limited availability are:
 
@@ -51,8 +54,9 @@ Timed activities
 
 There are sensors located on
 1. Rice cookers
-2. Dirty plates counter (queue)
-3. Order queue
+2. Plate washer
+3. Dirty plates counter (queue)
+4. Order queue
 
 Constraints:
 - Currently we have one robot which maps to a single processor.
@@ -75,6 +79,8 @@ Constraints:
    is needed which translates the program's model to whatever protocol the
    C function on the sensor expects like BLE etc. This is a challenge of
    the IO interface.
+5. if rice is half cooked and taken out of the cooker and then put back
+   again, cooking will start from scratch
 -}
 
 -- Limited Resources
@@ -89,7 +95,7 @@ newtype ChoppingBoard =
   ChoppingBoard {boardState :: BoardState}
   deriving (Show, Ord, Eq)
 
-data BoardState = EMPTY | INUSE deriving (Show, Ord, Eq)
+data BoardState = EMPTY | CUTTING | CUTDONE deriving (Show, Ord, Eq)
 
 
 newtype RiceCooker =
@@ -99,9 +105,23 @@ newtype RiceCooker =
 data CookerState = VACANT | COOKING | COOKDONE | FIRE deriving (Show, Ord, Eq)
 --                                       ^
 --                                       |
---                               if the cooker is in this state
---                               for more than `cookerBufferTime`
---                               it catches fire
+--                           if the cooker is in this state
+--                           for more than `cookerBufferTime`
+--                           it catches fire
+
+data PlateWasher =
+  PlateWasher { washerState :: WasherState
+              , platesInside :: [Plate]
+              }
+  deriving (Show, Ord, Eq)
+
+data WasherState = STOPPED | INUSE | DONE deriving (Show, Ord, Eq)
+-- We have simplified the plate washer
+-- state considerably. It is large enough
+-- that it can handle all 5 plates. Also
+-- if it is loaded with few plates and you
+-- put a new one it isn't an inconsistent state.
+
 
 
 -- Unlimited Resources
@@ -123,9 +143,9 @@ data SoapWater = SoapWater deriving (Show, Ord, Eq) -- indicates 1 plate worth s
 -- constants
 riceCookingTime  = 15 -- seconds
 cookerBufferTime = 10 -- seconds
-plateCleanTime   = 10 -- seconds
-sinkToCookerWalkTime = 3 -- seconds
-
+plateCleanTime   =  8 -- seconds
+fishCuttingTime  =  3 -- seconds
+onesec = 1000000 -- microseconds
 -- Other actions are considered instantenous
 
 data KitchenState = KitchenState { freshplates :: [Plate] -- 5 plates
@@ -134,6 +154,7 @@ data KitchenState = KitchenState { freshplates :: [Plate] -- 5 plates
                                  , fishes  :: [Fish]
                                  , rice :: [Rice]
                                  , soap :: [SoapWater]
+                                 , plateWasher :: PlateWasher
                                  }
 
 initKitchen :: KitchenState
@@ -144,6 +165,7 @@ initKitchen =
                , fishes  = repeat (Fish WHOLE)
                , rice    = repeat (Rice UNCOOKED)
                , soap    = repeat SoapWater
+               , plateWasher = PlateWasher STOPPED []
                }
 
 newtype Kitchen a =
@@ -186,3 +208,143 @@ cook :: BoundedChan Order  -- <-  | |
      -> Kitchen ()
 cook orderQ plateQ serviceQ = do
   cook orderQ plateQ serviceQ
+
+wholeOrder :: Kitchen Serve
+wholeOrder = do
+  r <- takeRice -- Step 1
+
+  -- Step 2.1
+  -- choose empty pressure cooker - takeCooker
+  -- check rice state, cooker state
+  -- then call riceToCooker
+  -- if busy handle other tasks
+
+  -- Step 2.2
+  -- receiveSync on channel from Step 2.1
+  -- but receive asynchronously
+
+  -- Step 3
+  -- approach the cooker from Step 2.1
+  -- call takeOutRice and hopefully get
+  -- cooked rice;(cooker in KitchenState
+  -- is update inside takeOutRice)
+  -- If rice is uncooked take goto Step 2.1
+
+  -- Step 4
+  -- Call takeFreshPlate if success goto step 6
+  -- else goto step 5(clean dirty plates).
+  -- if both 5 and 6 unsuccessful proceed to
+  -- fish cutting Step 7
+
+  -- Step 5
+  -- clean dirty plates (fresh plates exhausted)
+  -- check if PlateWasher is INUSE if not send
+  -- a dirty plate and current state of the washer
+  -- to `cleanPlate`
+
+  undefined
+
+takeRice :: Kitchen Rice
+takeRice = do
+  r <- S.gets rice
+  updateRice (tail r)
+  return (head r)
+
+takeCooker :: Kitchen (Maybe RiceCooker)
+takeCooker = do
+  cookers <- S.gets cookers
+  case length cookers of
+    0 -> return Nothing
+    _ -> do -- cooker available; take one and modify state
+      updateCookers (tail cookers)
+      return $ Just (head cookers)
+
+riceToCooker :: Rice
+             -> RiceCooker
+             -> Kitchen (Maybe (Channel CookerState))
+riceToCooker (Rice UNCOOKED) (RiceCooker VACANT) = do
+  ch <- S.liftIO channel
+  S.liftIO $ spawnNoTID (riceCookBurnCycle ch)
+  return (Just ch)
+    where
+      riceCookBurnCycle c = do
+        threadDelay (riceCookingTime * onesec)
+        sendSync c COOKDONE
+        threadDelay (cookerBufferTime * onesec)
+        sendSync c FIRE
+riceToCooker _ _ = return Nothing -- all other states have
+                                  -- something wrong with
+                                  -- the rice or the cooker
+
+takeOutRice :: RiceCooker -> Kitchen (Maybe Rice)
+takeOutRice rc =
+  case cookerState rc of
+    VACANT  -> return Nothing
+    COOKING -> do
+      putVacantCookerBack
+      return $ Just (Rice UNCOOKED)
+    COOKDONE -> do
+      putVacantCookerBack
+      return $ Just (Rice COOKED)
+    FIRE -> return Nothing
+
+takeFreshPlate :: Kitchen (Maybe Plate)
+takeFreshPlate = do
+  ps <- S.gets freshplates
+  case length ps of
+    0 -> return Nothing
+    _ -> do -- plate available; take one and modify state
+      updatePlates (tail ps)
+      return $ Just (head ps)
+
+cleanPlate :: Plate
+           -> PlateWasher
+           -> Kitchen (Maybe (Channel WasherState))
+cleanPlate p@(Plate DIRTY) (PlateWasher status ps)
+  | status == STOPPED || status == DONE = do
+      c <- S.liftIO channel
+      S.liftIO $ spawnNoTID (startCleaning c) -- this call should instantly return
+      updatePlateWasher (PlateWasher INUSE (p:ps))
+      return (Just c)
+  | otherwise = return Nothing -- status == INUSE
+  where
+    startCleaning ch = do
+      threadDelay (plateCleanTime * onesec)
+      sendSync ch DONE
+
+cleanPlate (Plate CLEAN)  _ = return Nothing
+
+
+-- Helpers --
+putVacantCookerBack :: Kitchen ()
+putVacantCookerBack = do
+  cookers <- S.gets cookers
+  updateCookers (RiceCooker VACANT : cookers)
+
+updatePlates :: [Plate] -> Kitchen ()
+updatePlates p =
+  S.modify $ \s -> s { freshplates = p }
+
+updateBoards :: [ChoppingBoard] -> Kitchen ()
+updateBoards b =
+  S.modify $ \s -> s { boards = b }
+
+updateCookers :: [RiceCooker] -> Kitchen ()
+updateCookers c =
+  S.modify $ \s -> s { cookers = c }
+
+updateFishes :: [Fish] -> Kitchen ()
+updateFishes f =
+  S.modify $ \s -> s { fishes = f }
+
+updateRice :: [Rice] -> Kitchen ()
+updateRice r =
+  S.modify $ \s -> s { rice = r }
+
+updateSoapWater :: [SoapWater] -> Kitchen ()
+updateSoapWater sw =
+  S.modify $ \s -> s { soap = sw }
+
+updatePlateWasher :: PlateWasher -> Kitchen ()
+updatePlateWasher pw =
+  S.modify $ \s -> s { plateWasher = pw }

@@ -4,14 +4,6 @@ import Control.Concurrent.CML
 import Control.Monad (void)
 import CML.Utils
 
-forever :: IO a -> IO b
-forever action = do
-  action
-  forever action
-
-
-spawnNoTID = void . spawn
-
 add :: Channel Int -> Channel Int -> Channel Int -> IO ()
 add inCh1 inCh2 outCh = forever $ do
   v1 <- receiveSync inCh1
