@@ -27,12 +27,13 @@ A robot is capable of
 2. Putting rice on a cooker
 3. Taking the rice out when it is cooked
 4. Fetching plates
-5. Clean dirty plates
-6. Putting cooked rice on a plate.
+5. Put dirty plates in plate washer
+6. Taking plate(s) out of washer once it is cleaned
 7. Taking fish
 8. Cutting it
-9. Put a cut fish on the plate (no need to cook it)
-10. Serve a plate with cut fish and cooked rice to the customer
+9. Taking the cut fish from the board(and restoring the board)
+10. Putting {cooked rice}(Step 3) and {cut fish} (Step 9) and put on a {plate}(Step - 4/6).
+11. Serve a plate with cut fish and cooked rice to the customer
 
 
 The resources with limited availability are:
@@ -55,8 +56,9 @@ Timed activities
 There are sensors located on
 1. Rice cookers
 2. Plate washer
-3. Dirty plates counter (queue)
-4. Order queue
+3. Chopping Boards
+4. Dirty plates counter (queue)
+5. Order queue
 
 Constraints:
 - Currently we have one robot which maps to a single processor.
@@ -81,6 +83,11 @@ Constraints:
    the IO interface.
 5. if rice is half cooked and taken out of the cooker and then put back
    again, cooking will start from scratch
+6. There is no conept of a kitchen table or having a limited number of items
+   you can put in your hands. You can simply store things in variables in
+   a given cycle. Once an order is done you can store in the BoundedChan as
+   well but you should stall and wait if the BoundedChan is full and that is
+   intentional. We don't want memory growth to be unbounded.
 -}
 
 -- Limited Resources
@@ -184,7 +191,8 @@ data Order =
         } deriving (Ord, Show, Eq)
 
 data Serve =
-  Serve { servedRice :: Rice
+  Serve { servingPlate :: Plate
+        , servedRice :: Rice
         , servedFish :: Fish
         , serviceId  :: Int -- should match order id
         } deriving (Ord, Show, Eq)
@@ -209,16 +217,32 @@ cook :: BoundedChan Order  -- <-  | |
 cook orderQ plateQ serviceQ = do
   cook orderQ plateQ serviceQ
 
+-- Step 1 of asynchrony
+-- Do multiple tasks asynchronously
+-- But one process. It will select and block
+-- in certain places
+-- If we introduce multiple processes there
+-- are hidden race condtions in takeCookerC
+-- to begin with plus all other constrained
+-- resources will have races.
 wholeOrder :: Kitchen Serve
 wholeOrder = do
-  r <- takeRice -- Step 1
+  uncookedrice <- takeRice
+  cookerChan <- S.liftIO channel
+  takeCookerC cookerChan -- async?
+  cookStateChan <- S.liftIO channel
+  riceToCookerC uncookedrice cookerChan cookStateChan -- async
+  -- ^ may silently throw error if Rice state anything
+  -- apart from UNCOOKED
+
+  -- Step 1 takeRice
 
   -- Step 2.1
   -- choose empty pressure cooker - takeCooker
   -- check rice state, cooker state
   -- then call riceToCooker
   -- if busy handle other tasks
-
+  
   -- Step 2.2
   -- receiveSync on channel from Step 2.1
   -- but receive asynchronously
@@ -231,10 +255,10 @@ wholeOrder = do
   -- If rice is uncooked take goto Step 2.1
 
   -- Step 4
-  -- Call takeFreshPlate if success goto step 6
-  -- else goto step 5(clean dirty plates).
-  -- if both 5 and 6 unsuccessful proceed to
-  -- fish cutting Step 7
+  -- Call takeFreshPlate if success goto step 7
+  -- else goto step 5(put dirty plates in washer).
+  -- Also check if washer has clean plates already
+  -- if washer INUSE plus `takeFreshPlate`
 
   -- Step 5
   -- clean dirty plates (fresh plates exhausted)
@@ -242,6 +266,31 @@ wholeOrder = do
   -- a dirty plate and current state of the washer
   -- to `cleanPlate`
 
+  -- Step 6
+  -- take plate out of washer - "takeOutPlates"
+  -- if you get plates out; take one plate and update
+  -- the state and proceed to Step 7.
+  -- If washer in use plus no fresh plates goto step 8
+
+  -- Step 7
+  -- `takeFish`
+
+  -- Step 8.1
+  -- Try taking a chopping board `takeChoppingBoard`
+
+  -- Step 8.2
+  -- Take fish from step 7 and chopping board from step8
+  -- and start chopping. listen asynchronous for the end
+  -- of chop time. if you didn't succeed might need to wait.
+
+  -- Step 9
+  -- Approach the board and take the fish out. and hopefully
+  -- get cut fish. If it is whole go back to Step 8.1
+
+  -- Step 10
+  -- Take output of Step 3,6,9; Combined they constitute an order
+
+  -- return
   undefined
 
 takeRice :: Kitchen Rice
@@ -249,6 +298,18 @@ takeRice = do
   r <- S.gets rice
   updateRice (tail r)
   return (head r)
+
+-- this is strange because we are accessing a global state
+-- without using channels
+takeCookerC :: Channel RiceCooker -> Kitchen ()
+takeCookerC cookerChan = foreverK $ do
+  cookers <- S.gets cookers -- separate get and update will lead to races
+  case length cookers of
+    0 -> return ()
+    _ -> do
+      updateCookers (tail cookers)
+      asyncSpawn $ sendSync cookerChan (head cookers)
+
 
 takeCooker :: Kitchen (Maybe RiceCooker)
 takeCooker = do
@@ -259,12 +320,33 @@ takeCooker = do
       updateCookers (tail cookers)
       return $ Just (head cookers)
 
+
+
+riceToCookerC :: Rice
+              -> Channel RiceCooker
+              -> Channel CookerState
+              -> Kitchen ()
+riceToCookerC (Rice UNCOOKED) cookerChan cookStateChan
+  = foreverK $ asyncSpawn $ do
+  _ <- S.liftIO $ receiveSync cookerChan
+  S.liftIO (riceCookBurnCycle cookStateChan)
+    where
+      riceCookBurnCycle c = do
+        threadDelay (riceCookingTime * onesec)
+        sendSync c COOKDONE
+        threadDelay (cookerBufferTime * onesec)
+        sendSync c FIRE
+riceToCookerC _ _ _ = return () -- anything apart from uncooked rice
+
+
+
+
 riceToCooker :: Rice
              -> RiceCooker
              -> Kitchen (Maybe (Channel CookerState))
 riceToCooker (Rice UNCOOKED) (RiceCooker VACANT) = do
   ch <- S.liftIO channel
-  S.liftIO $ spawnNoTID (riceCookBurnCycle ch)
+  asyncSpawn (riceCookBurnCycle ch)
   return (Just ch)
     where
       riceCookBurnCycle c = do
@@ -288,6 +370,20 @@ takeOutRice rc =
       return $ Just (Rice COOKED)
     FIRE -> return Nothing
 
+
+
+-- takeOutRice :: RiceCooker -> Kitchen (Maybe Rice)
+-- takeOutRice rc =
+--   case cookerState rc of
+--     VACANT  -> return Nothing
+--     COOKING -> do
+--       putVacantCookerBack
+--       return $ Just (Rice UNCOOKED)
+--     COOKDONE -> do
+--       putVacantCookerBack
+--       return $ Just (Rice COOKED)
+--     FIRE -> return Nothing
+
 takeFreshPlate :: Kitchen (Maybe Plate)
 takeFreshPlate = do
   ps <- S.gets freshplates
@@ -303,7 +399,7 @@ cleanPlate :: Plate
 cleanPlate p@(Plate DIRTY) (PlateWasher status ps)
   | status == STOPPED || status == DONE = do
       c <- S.liftIO channel
-      S.liftIO $ spawnNoTID (startCleaning c) -- this call should instantly return
+      asyncSpawn (startCleaning c) -- this call should instantly return
       updatePlateWasher (PlateWasher INUSE (p:ps))
       return (Just c)
   | otherwise = return Nothing -- status == INUSE
@@ -315,11 +411,92 @@ cleanPlate p@(Plate DIRTY) (PlateWasher status ps)
 cleanPlate (Plate CLEAN)  _ = return Nothing
 
 
+takeOutPlates :: PlateWasher -> Kitchen (Maybe [Plate])
+takeOutPlates (PlateWasher STOPPED ps) = do
+  emptyWasher
+  return $ Just ps
+takeOutPlates (PlateWasher DONE ps) = do
+  emptyWasher
+  return $ Just ps
+takeOutPlates (PlateWasher INUSE _) = return Nothing
+
+takeFish :: Kitchen Fish
+takeFish = do
+  fs <- S.gets fishes
+  updateFishes (tail fs)
+  return (head fs)
+
+takeChoppingBoardC :: Kitchen (Channel ChoppingBoard)
+takeChoppingBoardC = do
+  c <- S.liftIO channel
+  bs <- S.gets boards
+  case length bs of
+    0 -> return c
+    _ -> do
+      updateBoards (tail bs)
+      asyncSpawn $ sendSync c (head bs)
+      return c
+
+takeChoppingBoard :: Kitchen (Maybe ChoppingBoard)
+takeChoppingBoard = do
+  bs <- S.gets boards
+  case length bs of
+    0 -> return Nothing
+    _ -> do -- board available; take one and modify state
+      updateBoards (tail bs)
+      return $ Just (head bs)
+
+fishToBoard :: Fish
+            -> ChoppingBoard
+            -> Kitchen (Maybe (Channel BoardState))
+fishToBoard (Fish WHOLE) (ChoppingBoard EMPTY) = do
+  ch <- S.liftIO channel
+  asyncSpawn (fishCutCycle ch)
+  return (Just ch)
+    where
+      fishCutCycle c = do
+        threadDelay (fishCuttingTime * onesec)
+        sendSync c CUTDONE
+fishToBoard _ _ = return Nothing -- all other states won't
+                                  -- result in a channel
+
+takeCutFish :: ChoppingBoard -> Kitchen (Maybe Fish)
+takeCutFish cb =
+  case boardState cb of
+    EMPTY  -> return Nothing
+    CUTTING -> do
+      putBoardBack
+      return $ Just (Fish WHOLE)
+    CUTDONE -> do
+      putBoardBack
+      return $ Just (Fish CUT)
+
+
+
 -- Helpers --
+
+asyncSpawn :: IO () -> Kitchen ()
+asyncSpawn = S.liftIO . spawnNoTID
+
+foreverK :: Kitchen () -> Kitchen ()
+foreverK action = do
+  action
+  foreverK action
+
+
 putVacantCookerBack :: Kitchen ()
 putVacantCookerBack = do
   cookers <- S.gets cookers
   updateCookers (RiceCooker VACANT : cookers)
+
+putBoardBack :: Kitchen ()
+putBoardBack = do
+  bs <- S.gets boards
+  updateBoards (ChoppingBoard EMPTY : bs)
+
+emptyWasher :: Kitchen ()
+emptyWasher =
+  updatePlateWasher (PlateWasher STOPPED [])
 
 updatePlates :: [Plate] -> Kitchen ()
 updatePlates p =
