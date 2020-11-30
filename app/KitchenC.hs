@@ -3,14 +3,11 @@ module KitchenC where
 
 
 import CML.Utils
-import Control.Concurrent (threadDelay)
+import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.BoundedChan
-import Control.Concurrent.Chan
 import Control.Concurrent.CML
-import Control.Monad.Trans.State.Strict -- transformers
-import Data.Maybe
-import qualified Control.Monad.State.Strict as S -- mtl
-
+import Control.Concurrent.MVar
+import System.CPUTime
 {- Robot Kitchen
 
 An automated kitchen operated by a robot and equipped with sensors.
@@ -19,8 +16,8 @@ Task
 ----
 You get orders in a queue. All orders have a designated expire time. After that expire time
 you do not get any points for that order. If responded within the designated expire time you
-get 10 points. Your goal is to maximize the number of points while using the least number of
-robots (we start with 1).
+get 10 points otherwise you get -10. Your goal is to maximize the number of points while
+using the least number of robots (we start with 1).
 
 A robot is capable of
 1. Taking rice
@@ -90,6 +87,7 @@ Constraints:
    intentional. We don't want memory growth to be unbounded.
 -}
 
+type Points = Int
 -- Limited Resources
 newtype Plate =
   Plate { plateState :: PlateState }
@@ -148,7 +146,7 @@ onesec = 1000000 -- microseconds
 -- Dirty plates are also inputted to the system
 
 data Order =
-  Order { waitTime :: Int
+  Order { waitTime :: Double
         , orderId  :: Int
         } deriving (Ord, Show, Eq)
 
@@ -174,6 +172,8 @@ fishes = repeat (Fish WHOLE)
 rice :: [Rice]
 rice = repeat (Rice UNCOOKED)
 
+bandwidth :: Int
+bandwidth = 5
 --                    Bounded, buffered channels
 --                              | | |
 --                              | | |
@@ -181,12 +181,54 @@ rice = repeat (Rice UNCOOKED)
 cook :: BoundedChan Order  -- <-  | |
      -> BoundedChan Plate  -- <---  |
      -> BoundedChan Serve  -- <-----
+     -> Points
      -> IO ()
-cook orderQ plateQ serviceQ = do
-  cook orderQ plateQ serviceQ
+cook orderQ plateQ serviceQ points = do
+  dirtyPlateChan <- channel
+  mvars <- sequence $ replicate bandwidth newEmptyMVar
+  ps <- cook' mvars dirtyPlateChan []
+  cook orderQ plateQ serviceQ (points + sum ps)
+  where
+    cook' [] _ waitlist = mapM takeMVar waitlist
+    cook' (mvar:restmvars) dpChan waitlist = do
+      order <- readChan orderQ -- intentional blocking
+      forkIO (dirtyplatehandler dpChan)
+      forkIO (orderhandler order dpChan mvar)
+      cook' restmvars dpChan (mvar : waitlist)
+    dirtyplatehandler dpChan = do
+      dirtyplate <- readChan plateQ
+      sendSync dpChan dirtyplate
+      dirtyplatehandler dpChan
+    orderhandler order dpChan mvar = do
+      serve <- timedOrder order dpChan
+      total <-
+        case serve of
+          Nothing -> return $ points - 10
+          Just s  ->
+            if verifyServe s
+            then do
+              writeChan serviceQ s -- deliberate blocking on main thread
+              return $ points + 10
+            else return $ points - 10
+      putMVar mvar total
 
-wholeOrder :: IO Serve
-wholeOrder = do
+
+timedOrder :: Order
+           -> Channel Plate
+           -> IO (Maybe Serve)
+timedOrder o@(Order waittime _) dpChan = do
+  start <- getCPUTime
+  v <- wholeOrder o dpChan
+  end   <- getCPUTime
+  let diff = (fromIntegral (end - start)) / (10^12) :: Double
+  if diff > waittime
+  then return Nothing
+  else return $ Just v
+
+wholeOrder :: Order
+           -> Channel Plate
+           -> IO Serve
+wholeOrder (Order _ orderid) dirtyPlateChan = do
   let uncookedrice = head rice
   cookerInChan  <- channel
   cookerOutChan <- channel
@@ -195,7 +237,6 @@ wholeOrder = do
   asyncSpawn $ cookrice uncookedrice cookerOutChan cookStateChan
   -- ^ might silently throw error if Rice state is not UNCOOKED
   -- and cause deadlock but practically shouldn't happen
-
   cookedriceChan <- channel
   asyncSpawn $ riceReady cookStateChan cookerInChan cookedriceChan
 
@@ -203,7 +244,6 @@ wholeOrder = do
   platesInChan <- channel
   plateOutChan <- channel
   asyncSpawn $ plates initPlates platesInChan plateOutChan
-  dirtyPlateChan <- channel
   asyncSpawn $ washer initWasher dirtyPlateChan platesInChan
 
 
@@ -218,16 +258,12 @@ wholeOrder = do
   cutfishChan <- channel
   asyncSpawn $ fishready boardStateChan boardInChan cutfishChan
 
-
   -- channels needed for order
-  -- cookedRiceChan
-  -- plateOutChan
-  -- cutfishChan
-  --
-  -- dirtyPlateChan needs to be connected BoundedChan
+  cookedrice   <- receiveSync cookedriceChan -- Priority 1; might cause FIRE
+  servingplate <- receiveSync plateOutChan
+  cutfish <- receiveSync cutfishChan
 
-
-  undefined
+  return $ Serve servingplate cookedrice cutfish orderid
   where
     initCookers = replicate 2 (RiceCooker VACANT)
     initPlates  = replicate 5 (Plate CLEAN)
@@ -411,3 +447,12 @@ fishready inCh outCh1 outCh2 = do
 
 asyncSpawn = spawnNoTID
 
+test :: IO ()
+test = do
+  f <- newBoundedChan 1
+  g <- newBoundedChan 1
+  h <- newBoundedChan 1
+  forkIO $ cook f g h 0
+  forkIO $ writeChan f (Order 25.0 1)
+  s <- readChan h
+  putStrLn $ "abhi " ++ show s

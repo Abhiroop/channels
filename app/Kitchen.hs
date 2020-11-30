@@ -5,7 +5,6 @@ module Kitchen where
 import CML.Utils
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.BoundedChan
-import Control.Concurrent.Chan
 import Control.Concurrent.CML
 import Control.Monad.Trans.State.Strict -- transformers
 
