@@ -286,7 +286,7 @@ cooker cs inCh outCh = forever $ do
                ]
   where
     recvhandler mr = cooker (mr : cs) inCh outCh
-    sendhandler _ = cooker (tail cs) inCh outCh
+    sendhandler _  = cooker (tail cs) inCh outCh
 
 cookrice :: Rice
          -> Channel RiceCooker

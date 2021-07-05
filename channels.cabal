@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: b9388a06d45d6ff0b0eee71d675ba832077d832bc1dda0913aaa725915e17712
+-- hash: 663390648941a42c17b1c0199a76a4fa1747791a577e75ed9a1f0502c24adb4d
 
 name:           channels
 version:        0.1.0.0
@@ -44,7 +44,8 @@ executable channels-exe
       Fib
       Fibselect
       Kitchen
-      Utils.Queue
+      KitchenC
+      Swapchans
       Paths_channels
   hs-source-dirs:
       app

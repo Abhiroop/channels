@@ -66,3 +66,14 @@ timedsend timeout ch v timeoutaction = do
 --       sendSync ch v1
 --       _ <- receiveSync ch -- receive v2 and allow termination
 --       return ()
+
+--foo :: IO ()
+foo = do
+  boolCh  <- channel :: IO (Channel Bool)
+  intCh   <- channel :: IO (Channel Int)
+  floatCh <- channel :: IO (Channel Float)
+  let ev = choose [ transmit boolCh True
+                  , transmit intCh 1
+                  , transmit floatCh 2.3
+                  ]
+  sync ev
