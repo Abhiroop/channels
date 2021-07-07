@@ -28,6 +28,7 @@ swap c val = do
 
 type SwapChan' a = Channel (a, Channel a)
 
+swapChannel' :: IO (SwapChan' a)
 swapChannel' = do
   c <- channel
   return c
